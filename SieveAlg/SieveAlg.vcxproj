@@ -137,6 +137,9 @@
   <ItemGroup>
     <MASM Include="GetOffset.asm" />
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Header.hpp" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
     <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />

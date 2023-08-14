@@ -1,132 +1,157 @@
-// SieveAlg.cpp : This file contains the 'main' function. Program execution begins and ends there.
+﻿// SieveAlg.cpp : This file contains the 'main' function. Program execution begins and ends there.
 //
-#include <iostream>
-#include <vector>
-#include <thread>
-#include <queue>
-#undef max
-using namespace std;
-struct threadData {
-	long long start;
-	long long* currentResult;
-	
-};
-extern "C" unsigned long long __fastcall GetOffset(long long bufferStart, long long p);
-constexpr unsigned long long BufferSize = 1 << 20;
-const unsigned long long* primes;
-std::vector<unsigned long long> primeBuff = { 3 };
-std::queue<long long> q1, q2, q3, q4;
-void SimpleSieve(long long limit) {
+#include "Header.hpp"
+// this is a simple sieve algorithm giving us around 1 million prime numbers to start with
+std::vector<unit> SimpleSieve(unit limit) {
 	{
-		long long ts = 4;
+		unit ts = 4;
 		while (ts < limit)
 		{
 			ts *= 2;
 		}
 		limit = ts;
 	}
-
+	std::vector<unit> primeBuff = {};
 	bool* pbuff = new bool[limit];
-	memset(pbuff, -1, limit);
-	long long sq = ceil(sqrt(limit));
+	memset(pbuff, 1, limit);
+	unit sq = ceil(sqrt(limit));
 
-	for (long long i = 2; i <= sq; i++)
+	for (unit i = 2; i <= sq; i++)
 	{
-		bool* m = pbuff + (i * i);
+		if (pbuff[i] == false) continue;
+		primeBuff.push_back(i);
+		bool* m = pbuff + (i * i);	
 		while (m < pbuff + limit)
 		{
 			*m = false;
 			m += i;
 		}
 	}
-	for (long long i = 4; i < limit; i++)
-	{
+	unit i = sq;
+	// make sure is odd
+	if ((i & 1) == 0) i++;	
+	for (; i < limit; i +=2)
+	{		
 		if (pbuff[i]) {
 			primeBuff.push_back(i);
 		}
 	}
-	primes = primeBuff.data();
 	delete[] pbuff;
+	return primeBuff;
 }
 
-void sieve(threadData params) {
-	long long bufferStart = params.start;
+void SegmentedSieve(WorkerMetadata params) {
+	if (BufferSize % 8) throw std::exception("buffer size is not aligned");
+	unit bufferStart = params.start;
+	unit* primes = params.primes;
 	auto q = params.currentResult;
-	long long cycles = 0;
-	bool* const buffer = new bool[BufferSize];
+	// an array of bools, each bool indicates whether BufferStart + {its index} is prime or not
+	// bitset and vector<bool> take up less space but they're a lot slower
+	// so forget about changing this	 
+	bool* const buffer = new bool[BufferSize];	
+
 	while (true)
 	{
+		// UPDATE: I've decided not to waste any more resources on marking the even numbers
+		// since i can simply ignore them when iterating through
+		// UPDATE 2: this loop initialized the buffer so it doesn't contain junk values
+		// as well as marking the even numbers, so it can't be removed
 		{
 			unsigned long long* longbuf = (unsigned long long*)buffer;
 			unsigned long long* longend = (unsigned long long*)(buffer + BufferSize);
 			while (longbuf < longend)
 			{
-				*longbuf = 0xff00ff00ff00ff00;
+				*longbuf = 0x0100010001000100;
 				longbuf++;
 			}
 		}
-		// we'll first assume that all numbers are prime, and then multiply different numbers and mark the product as a compound number		 // n / 8
-		// the number end of the buffer indicates
-		unsigned long long bufferEnd = bufferStart + BufferSize;
-		unsigned long long endSqrt = ceil(sqrt(bufferEnd));
-		// we'll only use prime numbers as p because if it was compound number, 4 for example, every product of it is also a product of 2
-		// and already marked	
-		for (const unsigned long long* i = primes;*i < endSqrt;i++)
+		
+		// we'll first assume that all numbers are prime, and then multiply different numbers and mark the product as a compound number	
+		unit bufferEnd = bufferStart + BufferSize; 	// the number end of the buffer indicates
+		unit endSqrt = ceil(sqrt(bufferEnd));
+		// we'll only use prime numbers as p because if it was compound number, 4 for example, every product of it would also be a product of 2
+		// and already marked when iterating with p = 2		
+		
+		for (const unit* i = primes; *i < endSqrt; i++)
 		{
-			unsigned long long p = *i; 
-			
-			// the smallest multiplier for p where m * p >= bufferStart (within buffer range)
-			// except multipliers smaller than p would create duplicate compounds and slow down the program
-			// for example if p = 11 and m was smaller than p like 2 for exmaple;
-			// 22 would have already been checked with p = 2, m = 11 and we don't wanna do it again				
-			bool* j = buffer + GetOffset(bufferStart,p);
+			unit p = *i;
+			auto div =  std::lldiv(bufferStart,p);
+		
+			unit m = std::max(p,static_cast<unit>(div.quot) + (div.rem != 0));		
+			if ((m % 2) == 0) m++;
+			bool* j = buffer + (p * m) - bufferStart;
 			bool* bEnd = buffer + BufferSize;
+
 			while (j < bEnd)
 			{
-				// mark the number as a compound
 				*j = false;
-				j += p * 2;
-			}
+				j += 2 * p;
+			}			
 		}
-		// now all the compound numbers are marked with 'false' and the primes are left 'true'
-		// we'll use this loop to print the first prime in the buffer
-		// printing every prime we find would slow down the program so we'll just print one for every 8 million numbers going forward		
-		if (cycles % 8 == 0) {
-			size_t i = BufferSize - 1;
-			while (!buffer[i])
-			{
-				i--;
-			}
-			*q = bufferStart + i;
-			
+		
+	
+	
+		// the smallest multiplier for p where m * p >= bufferStart (other words its within buffer range)
+		// the minimum for m is p because multipliers smaller than p
+		//  would create duplicate compounds and slow down the program
+		// for example p = 11 , m = 2 => p * m = 22
+		// and also p = 2 , m = 11 => p * m = 22
+		// and thats a duplicate
+		
+		// now all the compound numbers are marked with 'false' and the primes are left 'true'	
+		size_t i = BufferSize - 1;
+		while (!buffer[i])
+		{
+			i--;
 		}
-		cycles++;
-		bufferStart += 3 * BufferSize;
-	}
-};
-int main()
-{
+		*q = bufferStart + i;
 
-	cout.sync_with_stdio(false);
-	// an array of bools, each bool indicates whether BufferStart + {its index} * 2 + 1 is prime or not
-	// bitset and vector<bool> take up less space but they're a lot slower
-	// so forget about changing this	 
-	 //unsigned long long bufferStart = 0;	 
-	SimpleSieve(1ll << 24);
-	long long resultList[3];
-	
-	std::thread worker1(sieve, threadData{ 0,&resultList[0]});
-	std::thread worker2(sieve, threadData{ BufferSize,&resultList[1]});
-	std::thread worker3(sieve, threadData{ 2 * BufferSize,&resultList[2]});
-	
-	while (true) {	
-		system("cls");
-		long long* m = resultList;
-			const char* comma = ", ";
-			cout <<
-				m[0] << comma <<
-				m[1] << comma <<
-				m[2] << endl ;			
-			//Sleep(10);
+		bufferStart += WorkerCount * BufferSize;
+	}
+}
+// this function formats the numbers we want to print
+// it works like this:
+// 1000 -> 1,000
+// 2100900 -> 2,100,900
+// I know this is not the most efficient way possible
+// but the performance doesn't really depend on this function
+void format(string& x) {
+	for (long long i = x.size() - 3; i > 0; i -= 3)
+	{
+		x.insert(x.begin() + i, ',');
+	}
+}
+int main()
+{ 
+	size_t x = 0;
+	auto primes = SimpleSieve(1ll << 24);	
+	for (size_t i = 0; i < WorkerCount; i++)
+	{
+		Workers[i] = new thread(
+			SegmentedSieve,
+			WorkerMetadata{
+				static_cast<unit>(i * BufferSize),
+				primes.data(),
+				&ResultList[i] 
+			}
+		);	
+		string s = "Worker " + to_string(i + 1) + ": ";
+		x = std::max(s.length(), x);
+		cout << s << endl;
+	}
+	cout.flush();
+	HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);	
+	while (true) {
+		COORD cord = { x,0 };
+
+		for (auto& i : ResultList)
+		{
+			SetConsoleCursorPosition(console, cord);
+			string d = to_string(i);
+			format(d);
+			cout << d;
+			cord.Y++;
+		}
+
 	}
 }
